@@ -9,13 +9,26 @@ Supports two actions via the "action" field:
         "action": "generate",
         "texts": ["Hello world", "How are you?"],
         "voice_file_base64": "<base64-encoded .pt file>",
-        "temperature": 0.8,
-        "exaggeration": 0.5,
-        "cfg_weight": 0.5,
+        "temperature": 0.8,          // float or list[float] per text
+        "exaggeration": 0.5,         // float or list[float] per text
+        "cfg_weight": 0.5,           // float or list[float] per text
         "language": "en"
     }
 }
 → {"audio_files": ["<base64 wav>", ...], "sample_rate": 24000}
+
+Per-text params example (each text gets its own settings):
+{
+    "input": {
+        "action": "generate",
+        "texts": ["Excited hello!", "Calm goodbye."],
+        "voice_file_base64": "...",
+        "temperature": [0.9, 0.5],
+        "exaggeration": [0.9, 0.2],
+        "cfg_weight": [0.3, 0.7],
+        "language": "en"
+    }
+}
 
 2. Clone voice:
 {

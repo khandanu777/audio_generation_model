@@ -24,7 +24,7 @@ import base64
 import os
 import time
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Union
 
 import requests
 
@@ -119,15 +119,44 @@ class ChatterboxClient:
 
         return pt_bytes
 
+    def _build_generate_payload(
+        self,
+        texts: list[str],
+        voice_pt_path: Optional[str],
+        voice_pt_bytes: Optional[bytes],
+        language: str,
+        temperature: Union[float, list[float]],
+        exaggeration: Union[float, list[float]],
+        cfg_weight: Union[float, list[float]],
+    ) -> dict:
+        if voice_pt_path:
+            voice_b64 = base64.b64encode(Path(voice_pt_path).read_bytes()).decode()
+        elif voice_pt_bytes:
+            voice_b64 = base64.b64encode(voice_pt_bytes).decode()
+        else:
+            raise ValueError("Provide either voice_pt_path or voice_pt_bytes")
+
+        return {
+            "input": {
+                "action": "generate",
+                "texts": texts,
+                "voice_file_base64": voice_b64,
+                "language": language,
+                "temperature": temperature,
+                "exaggeration": exaggeration,
+                "cfg_weight": cfg_weight,
+            }
+        }
+
     def generate(
         self,
         texts: list[str],
         voice_pt_path: Optional[str] = None,
         voice_pt_bytes: Optional[bytes] = None,
         language: str = "en",
-        temperature: float = 0.8,
-        exaggeration: float = 0.5,
-        cfg_weight: float = 0.5,
+        temperature: Union[float, list[float]] = 0.8,
+        exaggeration: Union[float, list[float]] = 0.5,
+        cfg_weight: Union[float, list[float]] = 0.5,
         output_dir: str = "output",
     ) -> list[str]:
         """
@@ -138,32 +167,19 @@ class ChatterboxClient:
             voice_pt_path: Path to a .pt voice file.
             voice_pt_bytes: Raw .pt bytes (alternative to voice_pt_path).
             language: Language code (e.g. "en", "es", "fr", "ja").
-            temperature: Sampling temperature (higher = more varied).
-            exaggeration: Emotion expressiveness (0-1).
-            cfg_weight: Classifier-free guidance weight.
+            temperature: Single float for all texts, or list[float] one per text.
+            exaggeration: Single float for all texts, or list[float] one per text.
+            cfg_weight: Single float for all texts, or list[float] one per text.
             output_dir: Directory to save generated .wav files.
 
         Returns:
             List of saved .wav file paths.
         """
-        if voice_pt_path:
-            voice_b64 = base64.b64encode(Path(voice_pt_path).read_bytes()).decode()
-        elif voice_pt_bytes:
-            voice_b64 = base64.b64encode(voice_pt_bytes).decode()
-        else:
-            raise ValueError("Provide either voice_pt_path or voice_pt_bytes")
-
-        output = self._run({
-            "input": {
-                "action": "generate",
-                "texts": texts,
-                "voice_file_base64": voice_b64,
-                "language": language,
-                "temperature": temperature,
-                "exaggeration": exaggeration,
-                "cfg_weight": cfg_weight,
-            }
-        })
+        payload = self._build_generate_payload(
+            texts, voice_pt_path, voice_pt_bytes,
+            language, temperature, exaggeration, cfg_weight,
+        )
+        output = self._run(payload)
 
         os.makedirs(output_dir, exist_ok=True)
         saved_paths = []
@@ -180,34 +196,30 @@ class ChatterboxClient:
         voice_pt_path: Optional[str] = None,
         voice_pt_bytes: Optional[bytes] = None,
         language: str = "en",
-        temperature: float = 0.8,
-        exaggeration: float = 0.5,
-        cfg_weight: float = 0.5,
+        temperature: Union[float, list[float]] = 0.8,
+        exaggeration: Union[float, list[float]] = 0.5,
+        cfg_weight: Union[float, list[float]] = 0.5,
     ) -> list[bytes]:
         """
         Same as generate() but returns raw WAV bytes instead of saving to disk.
         Useful for piping into other processing steps.
 
+        Args:
+            texts: List of text strings to synthesize.
+            voice_pt_path: Path to a .pt voice file.
+            voice_pt_bytes: Raw .pt bytes (alternative to voice_pt_path).
+            language: Language code (e.g. "en", "es", "fr", "ja").
+            temperature: Single float for all texts, or list[float] one per text.
+            exaggeration: Single float for all texts, or list[float] one per text.
+            cfg_weight: Single float for all texts, or list[float] one per text.
+
         Returns:
             List of WAV file bytes.
         """
-        if voice_pt_path:
-            voice_b64 = base64.b64encode(Path(voice_pt_path).read_bytes()).decode()
-        elif voice_pt_bytes:
-            voice_b64 = base64.b64encode(voice_pt_bytes).decode()
-        else:
-            raise ValueError("Provide either voice_pt_path or voice_pt_bytes")
-
-        output = self._run({
-            "input": {
-                "action": "generate",
-                "texts": texts,
-                "voice_file_base64": voice_b64,
-                "language": language,
-                "temperature": temperature,
-                "exaggeration": exaggeration,
-                "cfg_weight": cfg_weight,
-            }
-        })
+        payload = self._build_generate_payload(
+            texts, voice_pt_path, voice_pt_bytes,
+            language, temperature, exaggeration, cfg_weight,
+        )
+        output = self._run(payload)
 
         return [base64.b64decode(a) for a in output["audio_files"]]

@@ -88,21 +88,39 @@ def save_audio_files(output: dict, output_dir: str):
     return saved
 
 
+def _parse_float_or_list(value, count):
+    """Parse a CLI arg as a single float or comma-separated list of floats."""
+    if isinstance(value, list):
+        return [float(v) for v in value]
+    s = str(value)
+    if "," in s:
+        parts = [float(v.strip()) for v in s.split(",")]
+        if len(parts) != count:
+            raise ValueError(f"Expected {count} comma-separated values, got {len(parts)}: {s}")
+        return parts
+    return float(s)
+
+
 def run_test(
     api_key: str,
     endpoint_id: str,
     voice_pt_path: str,
     texts: list[str],
     language: str,
-    temperature: float,
-    exaggeration: float,
-    cfg_weight: float,
+    temperature,
+    exaggeration,
+    cfg_weight,
     timeout: int,
 ):
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
     }
+
+    n = len(texts)
+    temperature = _parse_float_or_list(temperature, n)
+    exaggeration = _parse_float_or_list(exaggeration, n)
+    cfg_weight = _parse_float_or_list(cfg_weight, n)
 
     # Encode voice file
     print(f"Loading voice file: {voice_pt_path}")
@@ -124,9 +142,11 @@ def run_test(
 
     # Submit
     print(f"\nSubmitting job to endpoint: {endpoint_id}")
-    print(f"  Texts: {texts}")
+    print(f"  Texts ({n}): {texts}")
     print(f"  Language: {language or '(default)'}")
-    print(f"  Temperature: {temperature}, Exaggeration: {exaggeration}, CFG: {cfg_weight}")
+    print(f"  Temperature:  {temperature}")
+    print(f"  Exaggeration: {exaggeration}")
+    print(f"  CFG weight:   {cfg_weight}")
 
     job_id = submit_job(endpoint_id, headers, payload)
     print(f"  Job ID: {job_id}\n")
@@ -179,9 +199,12 @@ def main():
         help="Texts to generate audio for",
     )
     parser.add_argument("--language", default="en", help="Language code (default: en)")
-    parser.add_argument("--temperature", type=float, default=0.6)
-    parser.add_argument("--exaggeration", type=float, default=0.6)
-    parser.add_argument("--cfg-weight", type=float, default=0.8)
+    parser.add_argument("--temperature", default="0.6",
+                        help="Single float or comma-separated list (e.g. '0.8' or '0.9,0.5,0.7')")
+    parser.add_argument("--exaggeration", default="0.6",
+                        help="Single float or comma-separated list (e.g. '0.5' or '0.9,0.2,0.5')")
+    parser.add_argument("--cfg-weight", default="0.8",
+                        help="Single float or comma-separated list (e.g. '0.5' or '0.3,0.7,0.5')")
     parser.add_argument("--timeout", type=int, default=300, help="Max wait time in seconds")
 
     args = parser.parse_args()

@@ -119,19 +119,46 @@ def generate_single(
     return enhance_loudness(wav)
 
 
+def _resolve_per_text_params(
+    param: "float | list[float]",
+    count: int,
+    default: float,
+    name: str,
+) -> list[float]:
+    """Accept a single float (applied to all) or a list (one per text)."""
+    if isinstance(param, list):
+        if len(param) != count:
+            raise ValueError(
+                f"len({name}) = {len(param)} but got {count} texts. "
+                f"Provide either a single value or one per text."
+            )
+        return param
+    return [param] * count
+
+
 def generate_batch(
     texts: list[str],
     voice_pt_bytes: bytes,
     language: Optional[str] = None,
-    temperature: float = 0.8,
-    exaggeration: float = 0.5,
-    cfg_weight: float = 0.5,
+    temperature: "float | list[float]" = 0.8,
+    exaggeration: "float | list[float]" = 0.5,
+    cfg_weight: "float | list[float]" = 0.5,
 ) -> list[torch.Tensor]:
-    """Generate audio for a list of texts using the given voice .pt file."""
+    """
+    Generate audio for a list of texts using the given voice .pt file.
+
+    temperature, exaggeration, and cfg_weight accept either a single float
+    (applied to every text) or a list of floats (one per text).
+    """
+    n = len(texts)
+    temps = _resolve_per_text_params(temperature, n, 0.8, "temperature")
+    exags = _resolve_per_text_params(exaggeration, n, 0.5, "exaggeration")
+    cfgs = _resolve_per_text_params(cfg_weight, n, 0.5, "cfg_weight")
+
     set_voice_from_bytes(voice_pt_bytes)
     return [
-        generate_single(text, language, temperature, exaggeration, cfg_weight)
-        for text in texts
+        generate_single(text, language, t, e, c)
+        for text, t, e, c in zip(texts, temps, exags, cfgs)
     ]
 
 

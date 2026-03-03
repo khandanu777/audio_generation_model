@@ -6,5 +6,11 @@ numpy
 runpod
 transformers
 tqdm
+einops
+diffusers
+conformer
+s3tokenizer
 scipy
+omegaconf
+tokenizers
 torchaudio

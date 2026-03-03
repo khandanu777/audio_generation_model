@@ -4,3 +4,7 @@ safetensors
 huggingface_hub
 numpy
 runpod
+transformers
+tqdm
+scipy
+torchaudio

@@ -20,11 +20,17 @@ COPY chatterbox /app/chatterbox
 ARG MODEL_TYPE=multilingual
 ENV MODEL_TYPE=${MODEL_TYPE}
 
+ARG HF_TOKEN=""
+ENV HF_TOKEN=${HF_TOKEN}
+
 RUN if [ "$MODEL_TYPE" = "multilingual" ]; then \
         python -c "from chatterbox.mtl_tts import ChatterboxMultilingualTTS; ChatterboxMultilingualTTS.from_pretrained(device='cpu')"; \
     else \
         python -c "from chatterbox.tts import ChatterboxTTS; ChatterboxTTS.from_pretrained(device='cpu')"; \
     fi
+
+# Clear the token from the image after download
+ENV HF_TOKEN=""
 
 COPY *.py .
 

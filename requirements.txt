@@ -14,3 +14,9 @@ scipy
 omegaconf
 tokenizers
 torchaudio
+
+
+
+# docker run yourdockerhubusername/runpod-inference:latest
+
+

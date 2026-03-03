@@ -160,13 +160,28 @@ def main():
     parser.add_argument(
         "--texts",
         nargs="+",
-        default=["Hello! This is a test of the Chatterbox text to speech system.", "How are you doing today? I hope everything is going well."],
+        default=[
+            "Hello! This is a test of the Chatterbox text to speech system.",
+            "How are you doing today? I hope everything is going well.",
+            "I am a software engineer and I love to code.",
+            "My name is John Doe and I am a software engineer.",
+            "what is the weather in Tokyo?",
+            "what is the weather in London?",
+            "what is the weather in Paris?",
+            "what is the weather in Berlin?",
+            "what is the weather in Rome?",
+            "what is the weather in Madrid?",
+            "what is the weather in Milan?",
+            "what is the weather in Amsterdam?",
+            "what is the weather in Vienna?",
+            "what is the weather in Zurich?",
+            ],
         help="Texts to generate audio for",
     )
     parser.add_argument("--language", default="en", help="Language code (default: en)")
-    parser.add_argument("--temperature", type=float, default=0.8)
-    parser.add_argument("--exaggeration", type=float, default=0.5)
-    parser.add_argument("--cfg-weight", type=float, default=0.5)
+    parser.add_argument("--temperature", type=float, default=0.6)
+    parser.add_argument("--exaggeration", type=float, default=0.6)
+    parser.add_argument("--cfg-weight", type=float, default=0.8)
     parser.add_argument("--timeout", type=int, default=300, help="Max wait time in seconds")
 
     args = parser.parse_args()

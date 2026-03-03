@@ -1,0 +1,6 @@
+librosa
+perth
+safetensors
+huggingface_hub
+numpy
+runpod

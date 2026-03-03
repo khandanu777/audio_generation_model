@@ -1,5 +1,5 @@
 librosa
-perth
+resemble-perth
 safetensors
 huggingface_hub
 numpy
@@ -14,7 +14,8 @@ scipy
 omegaconf
 tokenizers
 torchaudio
-
+python-dotenv
+requests
 
 
 # docker run yourdockerhubusername/runpod-inference:latest

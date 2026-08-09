@@ -85,6 +85,9 @@ class T3(nn.Module):
         self.text_head = nn.Linear(self.cfg.hidden_size, hp.text_tokens_dict_size, bias=False)
         self.speech_head = nn.Linear(self.cfg.hidden_size, hp.speech_tokens_dict_size, bias=self.is_gpt)
         self.compiled = False
+        # The alignment analyzer's forced-EOS heuristics were tuned on the v2
+        # multilingual checkpoint; v3 sets this False (see mtl_tts.from_local).
+        self.use_alignment_analyzer = True
 
     @property
     def device(self):
@@ -277,7 +280,7 @@ class T3(nn.Module):
         if not self.compiled:
             # Default to None for English models, only create for multilingual
             alignment_stream_analyzer = None
-            if self.hp.is_multilingual:
+            if self.hp.is_multilingual and self.use_alignment_analyzer:
                 alignment_stream_analyzer = AlignmentStreamAnalyzer(
                     self.tfmr,
                     None,

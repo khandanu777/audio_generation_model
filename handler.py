@@ -39,6 +39,10 @@ Per-text params example (each text gets its own settings):
     }
 }
 → {"voice_file_base64": "<base64-encoded .pt file>"}
+
+3. Report which checkpoints the worker loaded:
+{"input": {"action": "info"}}
+→ {"model_type": ..., "device": ..., "t3_model": ..., "s3gen_model": ..., "sample_rate": ...}
 """
 
 import base64
@@ -46,7 +50,11 @@ import base64
 import runpod
 
 from tts_engine import (
+    DEVICE,
+    MODEL_TYPE,
+    S3GEN_MODEL,
     SAMPLE_RATE,
+    T3_MODEL,
     clone_voice_from_audio,
     generate_batch,
     load_model,
@@ -113,8 +121,16 @@ def handler(job):
             return _handle_generate(job_input)
         elif action == "clone_voice":
             return _handle_clone_voice(job_input)
+        elif action == "info":
+            return {
+                "model_type": MODEL_TYPE,
+                "device": DEVICE,
+                "t3_model": T3_MODEL,
+                "s3gen_model": S3GEN_MODEL,
+                "sample_rate": SAMPLE_RATE,
+            }
         else:
-            return {"error": f"Unknown action: {action}. Use 'generate' or 'clone_voice'."}
+            return {"error": f"Unknown action: {action}. Use 'generate', 'clone_voice' or 'info'."}
     except Exception as e:
         return {"error": str(e)}
 

@@ -13,6 +13,7 @@ A deployment-ready Text-to-Speech system built on [Chatterbox](https://huggingfa
   - [FastAPI Server](#fastapi-server)
   - [RunPod Serverless Handler](#runpod-serverless-handler)
 - [Docker Deployment](#docker-deployment)
+- [Upgrading to V3 Checkpoints](#upgrading-to-v3-checkpoints)
 - [API Reference](#api-reference)
   - [Health Check](#get-health)
   - [Generate Audio (Multipart)](#post-generate)
@@ -35,7 +36,7 @@ A deployment-ready Text-to-Speech system built on [Chatterbox](https://huggingfa
 - **Multilingual support** — 23 languages including English, Spanish, French, Japanese, Chinese, and more
 - **Two deployment modes** — FastAPI server for self-hosting or RunPod serverless handler for GPU-on-demand
 - **Loudness normalization** — Automatic loudness enhancement with soft limiting on generated audio
-- **Pre-baked model weights** — Dockerfile pre-downloads weights at build time for fast cold starts
+- **Runtime weight fetch** — weights are pulled from HuggingFace on first start and cached on the pod volume
 
 ## Architecture
 
@@ -87,11 +88,16 @@ voice_generation_model/
 
 ## Environment Variables
 
-| Variable     | Default        | Description                                                    |
-|--------------|----------------|----------------------------------------------------------------|
-| `MODEL_TYPE` | `multilingual` | Model variant to load: `multilingual` or `en`                  |
-| `PORT`       | `8000`         | Port for the FastAPI server                                    |
-| `HF_TOKEN`   | *(none)*       | HuggingFace token (required if the model repo is gated)        |
+| Variable      | Default        | Description                                                                     |
+|---------------|----------------|---------------------------------------------------------------------------------|
+| `MODEL_TYPE`  | `multilingual` | Model variant to load: `multilingual` or `en`                                   |
+| `T3_MODEL`    | `v2`           | Multilingual T3 checkpoint: `v2` or `v3`. Ignored when `MODEL_TYPE=en`          |
+| `S3GEN_MODEL` | `v1`           | S3Gen vocoder checkpoint: `v1` or `v3`. Ignored when `MODEL_TYPE=en`            |
+| `PORT`        | `8000`         | Port for the FastAPI server                                                     |
+| `HF_TOKEN`    | *(none)*       | HuggingFace token (required if the model repo is gated)                         |
+
+The defaults reproduce the exact behaviour this service had before V3 support was
+added, so existing callers are unaffected. See [Upgrading to V3 Checkpoints](#upgrading-to-v3-checkpoints).
 
 ## Running Locally
 
@@ -139,7 +145,8 @@ docker build -t chatterbox-tts .
 docker build --build-arg MODEL_TYPE=en -t chatterbox-tts .
 ```
 
-Model weights are downloaded and baked into the image during build, so cold starts are fast.
+Model weights are **not** baked into the image — they are downloaded from HuggingFace on the
+first start and cached, so the first cold start after a fresh deploy is slow.
 
 ### Run with Docker
 
@@ -158,6 +165,117 @@ docker run --gpus all -p 8000:8000 chatterbox-tts python app.py
 3. Point it to your image
 4. The handler auto-starts via the default `CMD ["python", "handler.py"]`
 
+## Upgrading to V3 Checkpoints
+
+ResembleAI published two newer checkpoints to `ResembleAI/chatterbox`. Both are
+**opt-in** here and **off by default** — this service keeps running T3 v2 + S3Gen v1
+until you explicitly set an environment variable.
+
+| Env var | Value | Weights file | What it changes |
+|---------|-------|--------------|-----------------|
+| `T3_MODEL` | `v3` | `t3_mtl23ls_v3.safetensors` | Multilingual V3 text→token model: better speaker similarity, fewer hallucinations |
+| `S3GEN_MODEL` | `v3` | `s3gen_v3.pt` | Retrained HiFTNet vocoder (`mel2wav`) — waveform quality only |
+
+The two are independent; you can enable either or both.
+
+### Your cached `.pt` voice files stay valid
+
+`s3gen_v3` differs from `s3gen` **only** in the `mel2wav` vocoder submodule. The speech
+tokenizer, the speaker encoder (x-vector), and the flow matching decoder are byte-identical.
+Voice conditionals are produced by `embed_ref()`, which touches only those unchanged parts,
+so **every `.pt` file already held by downstream services keeps working — no re-cloning
+required** when switching either checkpoint.
+
+### Step-by-step: ship it to RunPod
+
+**1. Commit and push the code.** The weights themselves are *not* in the repo (`*.pt` and
+`*.safetensors` are gitignored) and are *not* baked into the image — they are pulled from
+HuggingFace on the pod's first cold start.
+
+```bash
+git add -A
+git commit -m "Add opt-in V3 checkpoint support"
+git push origin main
+```
+
+**2. Rebuild and push the image.** Required once, because the checkpoint-selection code is
+new. After this, switching versions never needs another rebuild.
+
+```bash
+docker build -t <your-registry>/chatterbox-tts:v3-support .
+docker push <your-registry>/chatterbox-tts:v3-support
+```
+
+**3. Point the endpoint at the new image.** In the RunPod console: *Serverless → your
+endpoint → Edit → Container Image*, set the new tag and save.
+
+**4. Set the environment variables.** Same edit screen, under *Environment Variables*:
+
+| Key | Value |
+|-----|-------|
+| `T3_MODEL` | `v3` |
+| `S3GEN_MODEL` | `v3` |
+
+Leave either one out to keep that component on the old checkpoint. Save — RunPod rolls the
+workers automatically.
+
+**5. Expect a slow first request.** The new checkpoints are downloaded on the first cold
+start (~2.1 GB for T3 v3, ~1.0 GB for S3Gen v3), so the first job after the switch can take
+several minutes. Subsequent cold starts reuse the cached volume.
+
+**6. Verify which weights the worker actually loaded** with the `info` action:
+
+```bash
+curl -X POST https://api.runpod.ai/v2/$RUNPOD_ENDPOINT_ID/runsync \
+  -H "Authorization: Bearer $RUNPOD_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"input": {"action": "info"}}'
+```
+
+```json
+{"output": {"model_type": "multilingual", "device": "cuda",
+            "t3_model": "v3", "s3gen_model": "v3", "sample_rate": 24000}}
+```
+
+The worker also logs the selection at startup:
+`[tts_engine] Loaded multilingual model on cuda (t3=v3, s3gen=v3)`
+
+**7. Generate as usual** — the request format is unchanged:
+
+```bash
+python test_endpoint.py --voice-pt srk.pt --texts "Testing the v3 checkpoints."
+```
+
+### Rolling back
+
+Set `T3_MODEL=v2` and `S3GEN_MODEL=v1` (or delete both variables) and save. No rebuild, no
+image change — the previous behaviour is restored exactly.
+
+### Recommended rollout
+
+Because other services depend on this endpoint, upgrade on a **separate endpoint** first:
+create a second RunPod serverless endpoint from the same image with the V3 variables set,
+compare output against the current one using the same `.pt` voice, then move traffic. Both
+endpoints can run side by side from one image — only the env vars differ.
+
+### Behaviour bundled with `T3_MODEL=v3`
+
+Three changes ship with V3 upstream and are applied **only** when `T3_MODEL=v3`, so the v2
+path is untouched:
+
+- The alignment stream analyzer is disabled — its forced-EOS heuristics were tuned on v2 and
+  can truncate v3 output.
+- Default `repetition_penalty` drops from `2.0` to `1.2`. An explicit value in the request
+  still wins.
+- The final speech token is trimmed (~40 ms of noise emitted just before EOS).
+
+### Local testing before you push
+
+```bash
+T3_MODEL=v3 S3GEN_MODEL=v3 MODEL_TYPE=multilingual python app.py
+curl localhost:8000/health   # confirms t3_model / s3gen_model
+```
+
 ## API Reference
 
 ### `GET /health`
@@ -169,7 +287,9 @@ Health check endpoint.
 {
   "status": "ok",
   "model_type": "multilingual",
-  "device": "cuda"
+  "device": "cuda",
+  "t3_model": "v2",
+  "s3gen_model": "v1"
 }
 ```
 
@@ -260,6 +380,10 @@ When deployed on RunPod, send jobs via the RunPod API.
   "sample_rate": 24000
 }
 ```
+
+The handler also accepts `"action": "clone_voice"` and `"action": "info"`. The latter reports
+which checkpoints the worker loaded — see
+[Upgrading to V3 Checkpoints](#upgrading-to-v3-checkpoints).
 
 ## Generation Parameters
 

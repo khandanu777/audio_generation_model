@@ -3,6 +3,9 @@ FROM runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1
 ENV MODEL_TYPE=multilingual
+# Checkpoint selection — override per RunPod endpoint, no rebuild needed.
+ENV T3_MODEL=v2
+ENV S3GEN_MODEL=v1
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libsndfile1 ffmpeg git \

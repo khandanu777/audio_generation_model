@@ -23,7 +23,9 @@ from contextlib import asynccontextmanager
 from tts_engine import (
     DEVICE,
     MODEL_TYPE,
+    S3GEN_MODEL,
     SAMPLE_RATE,
+    T3_MODEL,
     clone_voice_from_audio,
     generate_batch,
     load_model,
@@ -48,7 +50,13 @@ app = FastAPI(
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "model_type": MODEL_TYPE, "device": DEVICE}
+    return {
+        "status": "ok",
+        "model_type": MODEL_TYPE,
+        "device": DEVICE,
+        "t3_model": T3_MODEL,
+        "s3gen_model": S3GEN_MODEL,
+    }
 
 
 @app.post("/generate")

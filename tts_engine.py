@@ -16,6 +16,8 @@ import torchaudio
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 SAMPLE_RATE = 24000
 MODEL_TYPE = os.getenv("MODEL_TYPE", "multilingual")  # "multilingual" or "en"
+T3_MODEL = os.getenv("T3_MODEL", "v2")                # "v2" or "v3" (multilingual only)
+S3GEN_MODEL = os.getenv("S3GEN_MODEL", "v1")          # "v1" or "v3" (multilingual only)
 
 _model = None
 
@@ -25,11 +27,17 @@ def load_model():
     global _model
     if MODEL_TYPE == "multilingual":
         from chatterbox.mtl_tts import ChatterboxMultilingualTTS
-        _model = ChatterboxMultilingualTTS.from_pretrained(device=DEVICE)
+        _model = ChatterboxMultilingualTTS.from_pretrained(
+            device=DEVICE,
+            t3_model=T3_MODEL,
+            s3gen_model=S3GEN_MODEL,
+        )
+        print(f"[tts_engine] Loaded multilingual model on {DEVICE} "
+              f"(t3={T3_MODEL}, s3gen={S3GEN_MODEL})")
     else:
         from chatterbox.tts import ChatterboxTTS
         _model = ChatterboxTTS.from_pretrained(device=DEVICE)
-    print(f"[tts_engine] Loaded {MODEL_TYPE} model on {DEVICE}")
+        print(f"[tts_engine] Loaded en model on {DEVICE}")
     return _model
 
 

@@ -11,7 +11,7 @@ from huggingface_hub import snapshot_download
 
 from .models.t3 import T3
 from .models.t3.modules.t3_config import T3Config
-from .models.s3tokenizer import S3_SR, drop_invalid_tokens
+from .models.s3tokenizer import S3_SR, S3_TOKEN_RATE, drop_invalid_tokens
 from .models.s3gen import S3GEN_SR, S3Gen
 from .models.tokenizers import MTLTokenizer
 from .models.voice_encoder import VoiceEncoder
@@ -19,6 +19,32 @@ from .models.t3.modules.cond_enc import T3Cond
 
 
 REPO_ID = "ResembleAI/chatterbox"
+
+# Checkpoint selection. The defaults reproduce the original behaviour exactly.
+DEFAULT_T3_MODEL = "t3_mtl23ls_v2.safetensors"
+T3_MODELS = {
+    "v2": "t3_mtl23ls_v2.safetensors",
+    "v3": "t3_mtl23ls_v3.safetensors",
+}
+
+DEFAULT_S3GEN_MODEL = "s3gen.pt"
+S3GEN_MODELS = {
+    "v1": "s3gen.pt",
+    "v3": "s3gen_v3.pt",
+}
+
+
+def _resolve(alias, table, default, kind):
+    if alias is None:
+        return default
+    if alias in table:
+        return table[alias]
+    if alias.endswith((".safetensors", ".pt")):
+        return alias
+    raise ValueError(
+        f"Unknown {kind} '{alias}'. Choose from {sorted(table)} or pass a filename."
+    )
+
 
 # Supported languages for the multilingual model
 SUPPORTED_LANGUAGES = {
@@ -133,6 +159,7 @@ class Conditionals:
 class ChatterboxMultilingualTTS:
     ENC_COND_LEN = 6 * S3_SR
     DEC_COND_LEN = 10 * S3GEN_SR
+    is_t3_v3 = False  # set by from_local() when the v3 T3 checkpoint is loaded
 
     def __init__(
         self,
@@ -158,8 +185,10 @@ class ChatterboxMultilingualTTS:
         return SUPPORTED_LANGUAGES.copy()
 
     @classmethod
-    def from_local(cls, ckpt_dir, device) -> 'ChatterboxMultilingualTTS':
+    def from_local(cls, ckpt_dir, device, t3_model=None, s3gen_model=None) -> 'ChatterboxMultilingualTTS':
         ckpt_dir = Path(ckpt_dir)
+        t3_file = _resolve(t3_model, T3_MODELS, DEFAULT_T3_MODEL, "t3_model")
+        s3gen_file = _resolve(s3gen_model, S3GEN_MODELS, DEFAULT_S3GEN_MODEL, "s3gen_model")
 
         ve = VoiceEncoder()
         ve.load_state_dict(
@@ -168,22 +197,25 @@ class ChatterboxMultilingualTTS:
         ve.to(device).eval()
 
         t3 = T3(T3Config.multilingual())
-        t3_state = load_safetensors(ckpt_dir / "t3_mtl23ls_v2.safetensors")
+        t3_state = load_safetensors(ckpt_dir / t3_file)
         if "model" in t3_state.keys():
             t3_state = t3_state["model"][0]
         t3.load_state_dict(t3_state)
+        # v3 was trained without the alignment analyzer; leaving it on can force
+        # a premature EOS and truncate the audio.
+        t3.use_alignment_analyzer = t3_file != T3_MODELS["v3"]
         t3.to(device).eval()
 
         s3gen = S3Gen()
-        s3gen.load_state_dict(
-            # torch.load(ckpt_dir / "s3gen.pt", weights_only=True)
-            torch.load(
-                ckpt_dir / "s3gen.pt",
-                weights_only=True,
-                map_location=torch.device(device)
-            )
+        s3gen_state = torch.load(
+            ckpt_dir / s3gen_file,
+            weights_only=True,
+            map_location=torch.device(device)
         )
-        
+        # s3gen_v3 ships without the tokenizer._mel_filters / tokenizer.window
+        # buffers; both are recomputed deterministically in __init__.
+        s3gen.load_state_dict(s3gen_state, strict=s3gen_file == DEFAULT_S3GEN_MODEL)
+
         s3gen.to(device).eval()
 
         tokenizer = MTLTokenizer(
@@ -194,20 +226,24 @@ class ChatterboxMultilingualTTS:
         if (builtin_voice := ckpt_dir / "conds.pt").exists():
             conds = Conditionals.load(builtin_voice).to(device)
 
-        return cls(t3, s3gen, ve, tokenizer, device, conds=conds)
+        model = cls(t3, s3gen, ve, tokenizer, device, conds=conds)
+        model.is_t3_v3 = t3_file == T3_MODELS["v3"]
+        return model
 
     @classmethod
-    def from_pretrained(cls, device: torch.device) -> 'ChatterboxMultilingualTTS':
+    def from_pretrained(cls, device: torch.device, t3_model=None, s3gen_model=None) -> 'ChatterboxMultilingualTTS':
+        t3_file = _resolve(t3_model, T3_MODELS, DEFAULT_T3_MODEL, "t3_model")
+        s3gen_file = _resolve(s3gen_model, S3GEN_MODELS, DEFAULT_S3GEN_MODEL, "s3gen_model")
         ckpt_dir = Path(
             snapshot_download(
                 repo_id=REPO_ID,
                 repo_type="model",
-                revision="main", 
-                allow_patterns=["ve.pt", "t3_mtl23ls_v2.safetensors", "s3gen.pt", "grapheme_mtl_merged_expanded_v1.json", "conds.pt", "Cangjie5_TC.json"],
+                revision="main",
+                allow_patterns=["ve.pt", t3_file, s3gen_file, "grapheme_mtl_merged_expanded_v1.json", "conds.pt", "Cangjie5_TC.json"],
                 token=os.getenv("HF_TOKEN"),
             )
         )
-        return cls.from_local(ckpt_dir, device)
+        return cls.from_local(ckpt_dir, device, t3_model=t3_file, s3gen_model=s3gen_file)
     
     def prepare_conditionals(self, wav_fpath, exaggeration=0.5):
         ## Load reference wav
@@ -244,10 +280,13 @@ class ChatterboxMultilingualTTS:
         exaggeration=0.5,
         cfg_weight=0.5,
         temperature=0.8,
-        repetition_penalty=2.0,
+        repetition_penalty=None,
         min_p=0.05,
         top_p=1.0,
     ):
+        if repetition_penalty is None:
+            repetition_penalty = 1.2 if self.is_t3_v3 else 2.0
+
         # Validate language_id
         if language_id and language_id.lower() not in SUPPORTED_LANGUAGES:
             supported_langs = ", ".join(SUPPORTED_LANGUAGES.keys())
@@ -303,6 +342,11 @@ class ChatterboxMultilingualTTS:
                 ref_dict=self.conds.gen,
             )
             wav = wav.squeeze(0).detach().cpu().numpy()
+            if self.is_t3_v3:
+                # Drop the final speech token's audio: it is emitted just before
+                # EOS with degraded attention and decodes to ~40 ms of noise.
+                st_len = max(1, int(speech_tokens.shape[-1]) - 1)
+                wav = wav[: st_len * (S3GEN_SR // S3_TOKEN_RATE)]
             # watermarked_wav = self.watermarker.apply_watermark(wav, sample_rate=self.sr)
         return torch.from_numpy(wav).unsqueeze(0)
 

@@ -1,23 +1,43 @@
-librosa
-resemble-perth
-safetensors
-huggingface_hub
-numpy
-runpod
-transformers
-tqdm
-einops
-diffusers
-conformer
-s3tokenizer
-scipy
-omegaconf
-tokenizers
-torchaudio
-python-dotenv
-requests
+# Pinned for reproducible builds. Nothing here is floating on purpose:
+# an unpinned rebuild in Aug 2026 pulled transformers 5.14 and crashed every
+# worker at startup, so treat any version bump here as a deliberate change.
+#
+# The base image (runpod/pytorch:2.4.0-py3.11-cuda12.4.1) supplies torch 2.4.0
+# built against CUDA 12.4. torch is intentionally NOT listed: torchaudio==2.4.0
+# requires torch==2.4.0 exactly, so it stays locked without risking pip
+# replacing the CUDA build with a CPU wheel from PyPI.
+#
+# Hard constraints behind these pins:
+#   transformers  — 5.14.0 added a module-level `from torch.distributed.tensor
+#                   import DTensor`, reached unconditionally via activations.py.
+#                   That name only exists in torch >= 2.5 (the 2.4.0 module is an
+#                   empty file), so 5.13.1 is the ceiling on this base image.
+#                   5.2.0 is what upstream chatterbox pins and what the last
+#                   known-good image was built with.
+#   tokenizers    — transformers 5.2.0 requires >=0.22.0,<=0.23.0
+#   huggingface_hub — transformers 5.2.0 requires >=1.3.0,<2.0
+#   numpy         — kept on 1.x; torch 2.4 predates full numpy 2 support and
+#                   upstream chatterbox pins <2.0 for Python < 3.13
+#   torchaudio    — must track torch exactly
+
+librosa==0.11.0
+resemble-perth==1.0.1
+safetensors==0.5.3
+huggingface_hub==1.5.0
+numpy==1.26.4
+runpod==1.8.1
+transformers==5.2.0
+tqdm==4.67.3
+einops==0.8.2
+diffusers==0.36.0
+conformer==0.3.2
+s3tokenizer==0.3.0
+scipy==1.14.1
+omegaconf==2.3.0
+tokenizers==0.22.2
+torchaudio==2.4.0
+python-dotenv==1.2.2
+requests==2.32.5
 
 
 # docker run yourdockerhubusername/runpod-inference:latest
-
-

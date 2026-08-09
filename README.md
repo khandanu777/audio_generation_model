@@ -14,6 +14,7 @@ A deployment-ready Text-to-Speech system built on [Chatterbox](https://huggingfa
   - [RunPod Serverless Handler](#runpod-serverless-handler)
 - [Docker Deployment](#docker-deployment)
 - [Upgrading to V3 Checkpoints](#upgrading-to-v3-checkpoints)
+- [Dependency Pinning](#dependency-pinning)
 - [API Reference](#api-reference)
   - [Health Check](#get-health)
   - [Generate Audio (Multipart)](#post-generate)
@@ -81,7 +82,8 @@ voice_generation_model/
 ## Prerequisites
 
 - **Python** 3.11+
-- **PyTorch** 2.4+ with CUDA support (for GPU inference)
+- **PyTorch** exactly 2.4.0 with CUDA support (supplied by the base image; newer torch is
+  untested here and older `transformers` pins depend on it — see [Dependency Pinning](#dependency-pinning))
 - **CUDA** 12.4+ (recommended for production)
 - **ffmpeg** and **libsndfile1** (for audio processing)
 - **HuggingFace account** with access to `ResembleAI/chatterbox` (set `HF_TOKEN` if the repo is gated)
@@ -104,10 +106,15 @@ added, so existing callers are unaffected. See [Upgrading to V3 Checkpoints](#up
 ### Install Dependencies
 
 ```bash
-pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu124
+# torch must be 2.4.0 to match the base image — see the note in requirements.txt
+pip install torch==2.4.0 torchaudio==2.4.0 --index-url https://download.pytorch.org/whl/cu124
 pip install fastapi uvicorn
 pip install -r requirements.txt
 ```
+
+> **Dependencies are pinned.** `requirements.txt` pins every package to an exact
+> version. Do not relax the pins casually — in particular **`transformers` must stay
+> `<=5.13.1`** on this base image. See [Dependency Pinning](#dependency-pinning).
 
 ### FastAPI Server
 
@@ -275,6 +282,57 @@ path is untouched:
 T3_MODEL=v3 S3GEN_MODEL=v3 MODEL_TYPE=multilingual python app.py
 curl localhost:8000/health   # confirms t3_model / s3gen_model
 ```
+
+## Dependency Pinning
+
+`requirements.txt` pins every package to an exact version. This is deliberate: the file
+used to be fully unpinned, so each rebuild silently picked up whatever was newest on PyPI.
+A rebuild in August 2026 pulled `transformers` 5.14 and every worker crashed on startup
+with:
+
+```
+ImportError: cannot import name 'DTensor' from 'torch.distributed.tensor'
+```
+
+**Cause.** The base image `runpod/pytorch:2.4.0-py3.11-cuda12.4.1` provides **torch 2.4.0**,
+where `torch/distributed/tensor/__init__.py` is an empty placeholder — `DTensor` only
+entered that public namespace in torch 2.5. transformers 5.14.0 added a module-level
+`from torch.distributed.tensor import DTensor` that is reached unconditionally through
+`activations.py` when you import any model class, so `import transformers` itself fails.
+transformers still declares `torch>=2.4` in its metadata, so pip resolves it happily and
+the failure only appears at runtime.
+
+**The rule:** on this base image, **`transformers` must stay `<= 5.13.1`.** Verified by
+running the real import chain against torch 2.4.0:
+
+| transformers | Result on torch 2.4.0 |
+|--------------|------------------------|
+| 5.2.0 *(pinned)* | imports fine — also what upstream chatterbox pins |
+| 5.13.1 | imports fine — highest usable version |
+| 5.14.0 | **fails** — first version with the bad import |
+| 5.14.1 | **fails** |
+
+`torch` is deliberately absent from `requirements.txt`: `torchaudio==2.4.0` requires
+`torch==2.4.0` exactly, which locks it transitively while letting pip keep the CUDA 12.4
+build already in the image instead of replacing it with a CPU wheel from PyPI.
+
+### Changing a pin
+
+1. Check it against torch 2.4.0 before committing:
+   ```bash
+   docker run --rm python:3.11-slim bash -c \
+     "pip install -q torch==2.4.0 --index-url https://download.pytorch.org/whl/cpu && \
+      pip install -q transformers==<new-version> && \
+      python -c 'from transformers import LlamaModel, GPT2Model; print(\"ok\")'"
+   ```
+2. If you need a newer transformers than 5.13.1, you must move to a torch 2.5+ base image,
+   which revalidates the whole CUDA stack. Upstream chatterbox now targets torch 2.6.0 +
+   transformers 5.2.0.
+
+**Residual gap:** only direct dependencies are pinned; deeper transitive packages still
+float, though `numpy==1.26.4` constrains the risky `librosa → numba → numpy` chain. For
+a fully reproducible build, generate a complete lock with `pip freeze` inside a successful
+image and commit that instead.
 
 ## API Reference
 

@@ -610,3 +610,9 @@ for i, audio_b64 in enumerate(run["audio_files"]):
 - The loudness enhancer normalizes to **-14 dBFS** with a soft limiter at **-1 dBFS**.
 - Model weights are downloaded from HuggingFace Hub on first run (or at Docker build time).
 - The `.pt` voice conditionals files are portable and can be shared across deployments using the same model type.
+
+
+
+### NOTE
+This image can run on ada and amphere gpu arch and cuda>= 12.4
+So remember to keep these in gpu settings
